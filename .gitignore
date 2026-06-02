@@ -1,0 +1,10 @@
+# Local builds & test artifacts
+/relay
+/agent
+/dist/
+*.log
+*.test
+*.out
+.env
+.env.*
+coverage.txt
