@@ -30,6 +30,15 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(log)
 
+	// Load env from Vault Agent Injector template (if present) before
+	// reading config. Allows the relay container to run on distroless
+	// (no shell) without a wrapper script.
+	if p := os.Getenv("RELAY_ENV_FILE"); p != "" {
+		loadEnvFile(p)
+	} else {
+		loadEnvFile("/vault/secrets/env")
+	}
+
 	cfg, err := buildConfig()
 	if err != nil {
 		log.Error("config", "err", err)
