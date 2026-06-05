@@ -80,9 +80,18 @@ func (v *Verifier) VerifyAgent(token string) (*AgentClaims, error) {
 	return c, nil
 }
 
-// VerifySession validates a session token AND binds it to the connecting
-// browser's IP and User-Agent. Mismatch ⇒ unauthorized (replay defense).
-func (v *Verifier) VerifySession(token, ip, ua string) (*SessionClaims, error) {
+// VerifySession validates a session token and binds it to the connecting
+// browser's User-Agent. Mismatch ⇒ unauthorized (replay defense).
+//
+// Note on IP binding: in the OVH MKS topology the NGINX Ingress LoadBalancer
+// runs with externalTrafficPolicy=Cluster (kube-proxy SNATs across nodes) and
+// the OVH LB itself is L4 (no XFF injection), so the source IP observed by
+// the relay is a Kubernetes node IP that varies per request. The IP seen by
+// Hasfy-App when minting the token therefore does NOT match the IP seen by
+// the relay on /console/ws. Defence-in-depth comes from: HS256 signature
+// with a Vault-stored secret, a 5-minute TTL, single-use enforcement at the
+// session router (replay rejection), and UA binding.
+func (v *Verifier) VerifySession(token, _ /*ip*/, ua string) (*SessionClaims, error) {
 	c := &SessionClaims{}
 	t, err := jwt.ParseWithClaims(token, c, func(t *jwt.Token) (any, error) {
 		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
@@ -96,14 +105,16 @@ func (v *Verifier) VerifySession(token, ip, ua string) (*SessionClaims, error) {
 	if c.SessionID == "" || c.DeviceID == "" || c.OrgID == "" {
 		return nil, ErrUnauthorized
 	}
-	if !hashEq(c.IPHash, ip) || !hashEq(c.UAHash, ua) {
+	if !hashEq(c.UAHash, ua) {
 		return nil, ErrUnauthorized
 	}
 	return c, nil
 }
 
-// IssueSession mints a single-use session token bound to the operator's IP
-// and UA. TTL is hardcoded to 5 minutes — the browser must connect quickly.
+// IssueSession mints a single-use session token bound to the operator's UA.
+// IPHash is recorded for audit only — see VerifySession for why the relay
+// no longer enforces it.
+// TTL is hardcoded to 5 minutes — the browser must connect quickly.
 func (v *Verifier) IssueSession(orgID, deviceID, sessionID, sub, ip, ua string) (string, error) {
 	now := time.Now()
 	c := SessionClaims{
