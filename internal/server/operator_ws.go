@@ -142,6 +142,13 @@ func (s *Server) handleOperatorWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.router.detach(claims.SessionID)
 
+	// Best-effort: when this session ends, tell the agent to tear down any
+	// PTY it may have spawned for this session. Empty ExecID signals
+	// "kill the session-wide PTY" in our protocol.
+	defer func() {
+		a.Send(proto.Frame{Type: proto.TypeCancel, SessionID: claims.SessionID})
+	}()
+
 	// Hard cap.
 	ctx, cancel := context.WithTimeout(r.Context(), sessionMaxDuration)
 	defer cancel()
@@ -167,12 +174,13 @@ func (s *Server) handleOperatorWS(w http.ResponseWriter, r *http.Request) {
 			}
 			idle.Reset(sessionIdleTimeout)
 
-			// Lock down what an operator may send. Only Exec/Cancel/Ping.
+			// Lock down what an operator may send.
 			switch f.Type {
 			case proto.TypePing:
 				_ = writeFrame(ctx, c, proto.Frame{Type: proto.TypePong})
 				continue
-			case proto.TypeExec, proto.TypeCancel:
+			case proto.TypeExec, proto.TypeCancel,
+				proto.TypePtyStart, proto.TypePtyData, proto.TypePtyResize:
 				// continue below
 			default:
 				// Drop everything else.
@@ -195,6 +203,13 @@ func (s *Server) handleOperatorWS(w http.ResponseWriter, r *http.Request) {
 					Kind: "exec.start", OrgID: claims.OrgID, DeviceID: claims.DeviceID,
 					SessionID: claims.SessionID, ExecID: f.ExecID,
 					Operator: claims.Subject, Argv: f.Exec.Argv,
+				})
+			}
+
+			if f.Type == proto.TypePtyStart {
+				s.audit.Emit(audit.Event{
+					Kind: "pty.start", OrgID: claims.OrgID, DeviceID: claims.DeviceID,
+					SessionID: claims.SessionID, Operator: claims.Subject,
 				})
 			}
 

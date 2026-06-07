@@ -37,8 +37,19 @@ const (
 	TypeExit     FrameType = "exit"
 
 	// Relay → agent / browser → relay → agent.
-	TypeExec   FrameType = "exec"   // run a non-interactive command
-	TypeCancel FrameType = "cancel" // cancel an in-flight exec
+	TypeExec   FrameType = "exec"   // run a non-interactive command (legacy, kept for one-shot tooling)
+	TypeCancel FrameType = "cancel" // cancel an in-flight exec OR end a PTY session when ExecID is empty
+
+	// Interactive PTY (SSH-like) frames.
+	// Lifecycle: operator sends pty.start once → agent spawns shell under
+	// a PTY → bytes stream both directions via pty.data → operator may
+	// emit pty.resize on terminal resize → shell exit triggers pty.exit
+	// from agent. Session ends when either side closes the WS or relay
+	// sends TypeCancel with empty ExecID.
+	TypePtyStart  FrameType = "pty.start"
+	TypePtyData   FrameType = "pty.data"
+	TypePtyResize FrameType = "pty.resize"
+	TypePtyExit   FrameType = "pty.exit"
 )
 
 // Frame is the envelope for every WS message. Exactly one of the typed
@@ -54,6 +65,12 @@ type Frame struct {
 	Output    *Output   `json:"output,omitempty"`
 	Exit      *Exit     `json:"exit,omitempty"`
 	Error     *ErrorMsg `json:"error,omitempty"`
+
+	// PTY payloads.
+	PtyStart  *PtyStart  `json:"pty_start,omitempty"`
+	PtyData   *PtyData   `json:"pty_data,omitempty"`
+	PtyResize *PtyResize `json:"pty_resize,omitempty"`
+	PtyExit   *PtyExit   `json:"pty_exit,omitempty"`
 }
 
 // Hello is the first frame sent by either side, used for capability
@@ -114,4 +131,31 @@ type Exit struct {
 type ErrorMsg struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// PtyStart opens an interactive shell under a PTY for the current
+// session. Sent once at session start. If Shell is empty, the agent picks
+// a sensible default (zsh on darwin, bash on linux, falling back to sh).
+type PtyStart struct {
+	Cols  uint16 `json:"cols"`
+	Rows  uint16 `json:"rows"`
+	Shell string `json:"shell,omitempty"`
+	Term  string `json:"term,omitempty"` // TERM env, default "xterm-256color"
+}
+
+// PtyData carries raw bytes both ways. Base64-encoded so the JSON envelope
+// stays valid for any byte sequence (escape codes, UTF-8, control chars).
+type PtyData struct {
+	Data string `json:"data"` // base64
+}
+
+// PtyResize informs the agent that the operator's terminal has resized.
+type PtyResize struct {
+	Cols uint16 `json:"cols"`
+	Rows uint16 `json:"rows"`
+}
+
+// PtyExit signals the shell process has terminated.
+type PtyExit struct {
+	ExitCode int `json:"exit_code"`
 }

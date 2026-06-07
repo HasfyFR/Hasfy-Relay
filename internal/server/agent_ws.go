@@ -112,7 +112,9 @@ func agentReadPump(ctx context.Context, c *websocket.Conn, s *Server, a *registr
 		switch f.Type {
 		case proto.TypePong, proto.TypePing:
 			// keep-alive, no-op
-		case proto.TypeExecAck, proto.TypeExit, proto.TypeError, proto.TypeStdout, proto.TypeStderr:
+		case proto.TypeExecAck, proto.TypeExit, proto.TypeError,
+			proto.TypeStdout, proto.TypeStderr,
+			proto.TypePtyData, proto.TypePtyExit:
 			s.routeAgentResponse(a, f)
 		default:
 			// Unknown — drop on the floor, log once.

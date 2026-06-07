@@ -86,6 +86,10 @@ func runOnce(parent context.Context, log *slog.Logger, url, token string, reg pr
 	var mu sync.Mutex
 	cancels := map[string]context.CancelFunc{}
 
+	// Tracks interactive PTY sessions.
+	ptys := newPtyRegistry()
+	defer ptys.closeAll()
+
 	// Reader loop.
 	for {
 		select {
@@ -137,6 +141,12 @@ func runOnce(parent context.Context, log *slog.Logger, url, token string, reg pr
 
 		case proto.TypeCancel:
 			if f.ExecID == "" {
+				// Empty ExecID means "kill the PTY for this session".
+				if f.SessionID != "" {
+					if p := ptys.delete(f.SessionID); p != nil {
+						p.close()
+					}
+				}
 				continue
 			}
 			mu.Lock()
@@ -144,6 +154,47 @@ func runOnce(parent context.Context, log *slog.Logger, url, token string, reg pr
 				c()
 			}
 			mu.Unlock()
+
+		case proto.TypePtyStart:
+			if f.SessionID == "" || f.PtyStart == nil {
+				continue
+			}
+			if err := ptys.startPty(ctx, log, f.SessionID, *f.PtyStart, out); err != nil {
+				out <- proto.Frame{
+					Type: proto.TypeError, SessionID: f.SessionID,
+					Error: &proto.ErrorMsg{Code: "pty_start_failed", Message: err.Error()},
+				}
+			}
+
+		case proto.TypePtyData:
+			if f.SessionID == "" || f.PtyData == nil {
+				continue
+			}
+			p := ptys.get(f.SessionID)
+			if p == nil {
+				continue
+			}
+			raw, derr := base64.StdEncoding.DecodeString(f.PtyData.Data)
+			if derr != nil {
+				continue
+			}
+			if werr := p.writeStdin(raw); werr != nil {
+				// Shell is gone — clean up.
+				if removed := ptys.delete(f.SessionID); removed != nil {
+					removed.close()
+				}
+			}
+
+		case proto.TypePtyResize:
+			if f.SessionID == "" || f.PtyResize == nil {
+				continue
+			}
+			p := ptys.get(f.SessionID)
+			if p == nil {
+				continue
+			}
+			_ = p.resize(f.PtyResize.Cols, f.PtyResize.Rows)
+
 		default:
 			// ignore
 		}
