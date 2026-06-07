@@ -7,14 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"runtime"
 	"sync"
-	"syscall"
-	"time"
 
 	"github.com/HasfyFR/Hasfy-Relay/internal/proto"
-	"github.com/creack/pty"
 )
 
 // Cap on how many concurrent PTY shells one agent may host. Each session
@@ -23,15 +19,30 @@ const maxParallelPtys = 8
 
 // Output streaming knobs.
 const (
-	ptyReadBuf    = 32 * 1024 // bytes
-	ptyMaxFrameMs = 30        // flush every 30ms even if buffer not full
+	ptyReadBuf = 32 * 1024 // bytes
 )
+
+// ptyMaster is the OS-specific shell + pseudo-terminal pair. Closing the
+// master tears down the underlying process tree. Implemented by
+// `pty_unix.go` (creack/pty) on Unix-like systems and `pty_windows.go`
+// (ConPTY) on Windows 10 1809+.
+type ptyMaster interface {
+	io.ReadWriter
+	// Resize informs the kernel of a new terminal size in cells.
+	Resize(cols, rows uint16) error
+	// Wait blocks until the shell exits and returns its exit code. Safe
+	// to call after Close() — the OS-specific impl must be idempotent.
+	Wait() (int, error)
+	// Close tears down the shell process and releases the PTY. Idempotent.
+	Close() error
+	// PID returns the OS PID of the shell process. Useful for logs.
+	PID() int
+}
 
 // ptySession is one live shell under a PTY, keyed by the operator session ID.
 type ptySession struct {
 	sid    string
-	pty    *os.File
-	cmd    *exec.Cmd
+	master ptyMaster
 	cancel context.CancelFunc
 	mu     sync.Mutex // serializes stdin writes to the PTY master
 }
@@ -39,7 +50,7 @@ type ptySession struct {
 func (p *ptySession) writeStdin(b []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, err := p.pty.Write(b)
+	_, err := p.master.Write(b)
 	return err
 }
 
@@ -47,24 +58,12 @@ func (p *ptySession) resize(cols, rows uint16) error {
 	if cols == 0 || rows == 0 {
 		return nil
 	}
-	return pty.Setsize(p.pty, &pty.Winsize{Cols: cols, Rows: rows})
+	return p.master.Resize(cols, rows)
 }
 
 func (p *ptySession) close() {
-	// Cancel context first so the reader goroutine sees EOF cleanly.
 	p.cancel()
-	_ = p.pty.Close()
-	if p.cmd != nil && p.cmd.Process != nil {
-		_ = p.cmd.Process.Signal(syscall.SIGHUP)
-		// Give it 200ms to exit gracefully, then kill.
-		done := make(chan struct{})
-		go func() { _, _ = p.cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(200 * time.Millisecond):
-			_ = p.cmd.Process.Kill()
-		}
-	}
+	_ = p.master.Close()
 }
 
 // ptyRegistry holds active PTY sessions for this agent connection. The
@@ -120,6 +119,9 @@ func (r *ptyRegistry) closeAll() {
 // streams its output back via `out`. It returns immediately; the shell
 // runs in background goroutines until the parent context is cancelled,
 // the shell exits, or the session is explicitly closed.
+//
+// The OS-specific shell spawn is delegated to `spawnShell` which is
+// implemented separately for Unix (creack/pty) and Windows (ConPTY).
 func (r *ptyRegistry) startPty(
 	parent context.Context,
 	log *slog.Logger,
@@ -150,13 +152,7 @@ func (r *ptyRegistry) startPty(
 
 	ctx, cancel := context.WithCancel(parent)
 
-	// Login shell so PATH and user env are populated as if the operator
-	// SSH'd in. This matches the "SSH-like" UX expected by the operator.
-	cmd := exec.CommandContext(ctx, shell, "-l")
-	cmd.Env = ptyEnv(term, shell)
-
-	// Start under PTY.
-	ptyFile, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
+	master, err := spawnShell(shell, term, cols, rows)
 	if err != nil {
 		cancel()
 		return err
@@ -164,8 +160,7 @@ func (r *ptyRegistry) startPty(
 
 	sess := &ptySession{
 		sid:    sid,
-		pty:    ptyFile,
-		cmd:    cmd,
+		master: master,
 		cancel: cancel,
 	}
 	if !r.put(sid, sess) {
@@ -173,7 +168,7 @@ func (r *ptyRegistry) startPty(
 		return errors.New("pty already exists for session or capacity reached")
 	}
 
-	log.Info("pty started", "sid", sid, "shell", shell, "pid", cmd.Process.Pid)
+	log.Info("pty started", "sid", sid, "shell", shell, "pid", master.PID())
 
 	// Reader goroutine: drains PTY → emits pty.data frames.
 	go func() {
@@ -185,7 +180,7 @@ func (r *ptyRegistry) startPty(
 		}()
 		buf := make([]byte, ptyReadBuf)
 		for {
-			n, rerr := ptyFile.Read(buf)
+			n, rerr := master.Read(buf)
 			if n > 0 {
 				chunk := make([]byte, n)
 				copy(chunk, buf[:n])
@@ -200,18 +195,9 @@ func (r *ptyRegistry) startPty(
 				}
 			}
 			if rerr != nil {
-				// Shell exited or PTY closed.
-				exitCode := 0
-				if cmd.ProcessState != nil {
-					exitCode = cmd.ProcessState.ExitCode()
-				} else if werr := cmd.Wait(); werr != nil {
-					var ee *exec.ExitError
-					if errors.As(werr, &ee) {
-						exitCode = ee.ExitCode()
-					} else {
-						exitCode = -1
-					}
-				}
+				// Shell exited or PTY closed. Wait() returns the exit
+				// code (or -1 if the process was killed by signal).
+				exitCode, _ := master.Wait()
 				if rerr != io.EOF {
 					log.Info("pty closed", "sid", sid, "err", rerr.Error())
 				}
@@ -232,41 +218,28 @@ func (r *ptyRegistry) startPty(
 }
 
 // defaultShell returns the most reasonable interactive shell available on
-// the current OS. Falls back to /bin/sh if nothing else exists.
+// the current OS. Falls back to a minimal shell if nothing else exists.
 func defaultShell() string {
-	candidates := []string{}
-	if runtime.GOOS == "darwin" {
-		candidates = append(candidates, "/bin/zsh", "/bin/bash")
-	} else {
-		candidates = append(candidates, "/bin/bash", "/bin/zsh")
-	}
-	candidates = append(candidates, "/bin/sh")
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p
+	switch runtime.GOOS {
+	case "windows":
+		// PowerShell if present, else cmd.exe via ComSpec.
+		if cs := os.Getenv("ComSpec"); cs != "" {
+			return cs
 		}
-	}
-	return "/bin/sh"
-}
-
-// ptyEnv builds a minimal, deterministic environment for the shell. We
-// deliberately do NOT inherit the agent's env (which is launchd-cleansed
-// and contains the relay token) to avoid leaking secrets into the shell.
-func ptyEnv(term, shell string) []string {
-	home, _ := os.UserHomeDir()
-	if home == "" {
-		home = "/"
-	}
-	pathSuffix := ""
-	if runtime.GOOS == "darwin" {
-		pathSuffix = ":/opt/homebrew/bin:/opt/homebrew/sbin"
-	}
-	return []string{
-		"TERM=" + term,
-		"HOME=" + home,
-		"SHELL=" + shell,
-		"LANG=en_US.UTF-8",
-		"LC_ALL=en_US.UTF-8",
-		"PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin" + pathSuffix,
+		return "cmd.exe"
+	case "darwin":
+		for _, p := range []string{"/bin/zsh", "/bin/bash", "/bin/sh"} {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+		return "/bin/sh"
+	default: // linux + other unix
+		for _, p := range []string{"/bin/bash", "/bin/zsh", "/bin/sh"} {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+		return "/bin/sh"
 	}
 }
