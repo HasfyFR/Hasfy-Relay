@@ -30,6 +30,18 @@ import (
 var Version = "dev"
 
 func main() {
+	// `hasfy-agent --version` / `-v` prints the baked version and
+	// exits. Used by the installer's daemon-updater to compare the
+	// running binary against the latest release, and by humans for
+	// support diagnostics.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			os.Stdout.WriteString(Version + "\n")
+			return
+		}
+	}
+
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	relayURL := mustEnv("HASFY_RELAY_URL")

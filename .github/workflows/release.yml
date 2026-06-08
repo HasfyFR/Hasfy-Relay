@@ -53,3 +53,123 @@ jobs:
             VERSION=${{ steps.ver.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ──────────────────────────────────────────────────────────────────
+  # Publish the daemon binary + manifest JSON to Supabase Storage so
+  # the Hasfy-Installer's daemon updater can pick it up. The manifest
+  # is at installers/agent-daemon-manifest.json and is overwritten
+  # atomically on every tag push.
+  # ──────────────────────────────────────────────────────────────────
+  publish-daemon-manifest:
+    runs-on: ubuntu-latest
+    needs: goreleaser
+    env:
+      SUPABASE_URL: https://supabase.hasfy.fr
+      BUCKET: installers
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Bail out if SUPABASE_SERVICE_ROLE_KEY is not configured
+        env:
+          SVC_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$SVC_KEY" ]; then
+            echo "SUPABASE_SERVICE_ROLE_KEY not set — skipping daemon publish"
+            echo "skip=true" >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/setup-go@v5
+        if: env.skip != 'true'
+        with: { go-version: "1.22" }
+
+      - name: Compute version
+        if: env.skip != 'true'
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Cross-build daemon binaries
+        if: env.skip != 'true'
+        env:
+          VERSION: v${{ steps.ver.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist-daemon
+          LDFLAGS="-s -w -X main.Version=${VERSION}"
+          for plat in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${plat%/*}"; arch="${plat#*/}"
+            out="dist-daemon/hasfy-agent-${VERSION}-${os}-${arch}"
+            [ "$os" = "windows" ] && out="${out}.exe"
+            echo "Building $out"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags "$LDFLAGS" -o "$out" ./cmd/agent
+          done
+          ls -la dist-daemon/
+
+      - name: Upload daemon binaries + manifest to Supabase
+        if: env.skip != 'true'
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERSION: v${{ steps.ver.outputs.version }}
+        run: |
+          set -eu
+          upload() {
+            local file="$1" remote="$2" mime="$3"
+            local code
+            code=$(curl -s -o /tmp/_body -w "%{http_code}" \
+              -X POST "${SUPABASE_URL}/storage/v1/object/${BUCKET}/${remote}" \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+              -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+              -H "Content-Type: ${mime}" \
+              -H "x-upsert: true" \
+              --data-binary "@${file}" \
+              --max-time 300)
+            case "$code" in
+              200|201) echo "  ✓ ${remote}" ;;
+              *)       echo "  ✗ ${remote} (HTTP $code)"; cat /tmp/_body; exit 1 ;;
+            esac
+          }
+
+          # Build the manifest JSON in parallel with the uploads so we
+          # only commit the manifest after every binary is in place.
+          # Otherwise a partial upload would point clients at 404s.
+          artifacts_json="["
+          first=1
+          for plat in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+            os="${plat%/*}"; arch="${plat#*/}"
+            src="dist-daemon/hasfy-agent-${VERSION}-${os}-${arch}"
+            remote="hasfy-agent-${VERSION}-${os}-${arch}"
+            mime="application/octet-stream"
+            if [ "$os" = "windows" ]; then
+              src="${src}.exe"
+              remote="${remote}.exe"
+              mime="application/x-msdownload"
+            fi
+            [ -f "$src" ] || { echo "missing $src"; exit 1; }
+
+            sha=$(sha256sum "$src" | cut -d' ' -f1)
+            size=$(stat -c%s "$src")
+            url="${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${remote}"
+
+            echo "Uploading $remote (${size} bytes, sha256=${sha:0:12}…)"
+            upload "$src" "$remote" "$mime"
+
+            [ $first -eq 0 ] && artifacts_json="${artifacts_json},"
+            first=0
+            artifacts_json="${artifacts_json}{\"platform\":\"${os}\",\"arch\":\"${arch}\",\"url\":\"${url}\",\"sha256\":\"${sha}\",\"size\":${size}}"
+          done
+          artifacts_json="${artifacts_json}]"
+
+          cat > /tmp/agent-daemon-manifest.json <<EOF
+          {
+            "latest": "${VERSION}",
+            "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "artifacts": ${artifacts_json}
+          }
+          EOF
+          echo "Manifest:"; cat /tmp/agent-daemon-manifest.json
+
+          # Manifest goes last so a partial binary upload (above) doesn't
+          # leave clients pointing at a missing artifact.
+          upload /tmp/agent-daemon-manifest.json "agent-daemon-manifest.json" "application/json"
+          echo "Daemon manifest published for ${VERSION}"
