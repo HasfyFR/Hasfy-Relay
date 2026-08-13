@@ -62,6 +62,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Drains the audit queue to Hasfy-App. A no-op when HASFY_APP_URL is
+	// unset; the trail then stays on stdout only.
+	go srv.StartAuditForwarder(ctx)
+
 	go func() {
 		log.Info("relay listening", "addr", addr)
 		var err error
@@ -105,5 +109,7 @@ func buildConfig() (server.Config, error) {
 		SessionSecret:   sess,
 		SvcSecret:       svc,
 		OperatorOrigins: origins,
+		// Optional: without it the audit trail stays on stdout only.
+		AppURL: envDefault("HASFY_APP_URL", ""),
 	}, nil
 }

@@ -111,8 +111,43 @@ jobs:
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           VERSION: v${{ steps.ver.outputs.version }}
+          # Same minisign key the Hasfy-Agent release pipeline uses. The
+          # installer has the matching public key compiled in as
+          # HASFY_UPDATER_PUBKEY and refuses to apply a daemon update whose
+          # manifest is unsigned or badly signed.
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_KEY_PASSWORD: ${{ secrets.MINISIGN_KEY_PASSWORD }}
         run: |
           set -eu
+
+          # The manifest is the root of trust for the daemon self-updater: it
+          # names the artifact URL and its sha256, and the binary it points at
+          # runs as root with a remote PTY behind it. The per-artifact sha256
+          # lives *inside* the manifest, so it authenticates nothing on its
+          # own — without a detached signature, write access to this public
+          # bucket is root on the whole fleet. Refuse to publish unsigned.
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "::error::MINISIGN_SECRET_KEY is not set in this repository."
+            echo
+            echo "The daemon manifest is the root of trust for hasfy-agent self-update:"
+            echo "it names the binary URL and its sha256, and that binary runs as root"
+            echo "with a remote PTY behind it. The sha256 lives *inside* the manifest, so"
+            echo "it authenticates nothing on its own — write access to the public bucket"
+            echo "would be root on the whole fleet."
+            echo
+            echo "Hasfy-Agent/src-tauri/src/updater/daemon.rs verifies a detached minisign"
+            echo "signature and refuses an unsigned manifest, so publishing without one"
+            echo "would not be insecure — it would simply disable daemon auto-update."
+            echo
+            echo "Fix: copy the two secrets that already exist in the Hasfy-Agent repo:"
+            echo "  gh secret set MINISIGN_SECRET_KEY   --repo HasfyFR/Hasfy-Relay"
+            echo "  gh secret set MINISIGN_KEY_PASSWORD --repo HasfyFR/Hasfy-Relay"
+            echo "They must be the same key pair whose public half is baked into the"
+            echo "installer as HASFY_UPDATER_PUBKEY, or clients will reject the signature."
+            exit 1
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+
           upload() {
             local file="$1" remote="$2" mime="$3"
             local code
@@ -169,7 +204,28 @@ jobs:
           EOF
           echo "Manifest:"; cat /tmp/agent-daemon-manifest.json
 
-          # Manifest goes last so a partial binary upload (above) doesn't
-          # leave clients pointing at a missing artifact.
+          # Sign the manifest bytes exactly as they will be served. The
+          # client verifies the raw response before parsing it, so any
+          # re-formatting between here and upload would break verification.
+          KEY_FILE=$(mktemp /tmp/minisign.key.XXXXXX)
+          trap 'rm -f "$KEY_FILE"' EXIT
+          echo "$MINISIGN_SECRET_KEY" | base64 -d > "$KEY_FILE"
+          if [ -n "${MINISIGN_KEY_PASSWORD:-}" ]; then
+            echo "$MINISIGN_KEY_PASSWORD" | minisign -S -H -s "$KEY_FILE" \
+              -m /tmp/agent-daemon-manifest.json \
+              -x /tmp/agent-daemon-manifest.json.minisig >/dev/null
+          else
+            minisign -S -H -s "$KEY_FILE" \
+              -m /tmp/agent-daemon-manifest.json \
+              -x /tmp/agent-daemon-manifest.json.minisig </dev/null >/dev/null
+          fi
+
+          # Signature first, manifest last, so the new manifest is never
+          # served without a matching signature already in place. The
+          # remaining race — a client reading the old manifest and the new
+          # signature — fails verification, which is fail-closed: the daemon
+          # keeps its current version and retries at the next 6 h tick.
+          upload /tmp/agent-daemon-manifest.json.minisig \
+            "agent-daemon-manifest.json.minisig" "text/plain"
           upload /tmp/agent-daemon-manifest.json "agent-daemon-manifest.json" "application/json"
-          echo "Daemon manifest published for ${VERSION}"
+          echo "Daemon manifest published and signed for ${VERSION}"

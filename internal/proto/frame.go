@@ -23,11 +23,11 @@ type FrameType string
 
 const (
 	// Control frames (both directions).
-	TypeHello   FrameType = "hello"
-	TypePing    FrameType = "ping"
-	TypePong    FrameType = "pong"
-	TypeError   FrameType = "error"
-	TypeBye     FrameType = "bye"
+	TypeHello FrameType = "hello"
+	TypePing  FrameType = "ping"
+	TypePong  FrameType = "pong"
+	TypeError FrameType = "error"
+	TypeBye   FrameType = "bye"
 
 	// Agent → relay.
 	TypeRegister FrameType = "register" // agent announces itself
@@ -88,9 +88,9 @@ type Register struct {
 	DeviceID string            `json:"device_id"`
 	OrgID    string            `json:"org_id"`
 	Hostname string            `json:"hostname"`
-	OS       string            `json:"os"`         // "linux" | "darwin" | "windows"
-	Arch     string            `json:"arch"`       // "amd64" | "arm64"
-	Version  string            `json:"version"`    // agent build version
+	OS       string            `json:"os"`      // "linux" | "darwin" | "windows"
+	Arch     string            `json:"arch"`    // "amd64" | "arm64"
+	Version  string            `json:"version"` // agent build version
 	Tags     map[string]string `json:"tags,omitempty"`
 }
 
@@ -99,12 +99,31 @@ type Register struct {
 // array — never join into a shell string. This blocks shell injection by
 // construction.
 type Exec struct {
+	// Argv is executed directly — never through a shell. The relay and the
+	// agent both refuse an empty Argv unless Script is set.
 	Argv      []string          `json:"argv"`
 	Cwd       string            `json:"cwd,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`     // additive, won't override sensitive vars
-	Stdin     string            `json:"stdin,omitempty"`   // base64 — full content, not a stream
-	TimeoutMs int               `json:"timeout_ms"`        // mandatory, max 600_000
-	OutputCap int               `json:"output_cap"`        // bytes per stream, default 1 MiB
+	Env       map[string]string `json:"env,omitempty"`   // additive, won't override sensitive vars
+	Stdin     string            `json:"stdin,omitempty"` // base64 — full content, not a stream
+	TimeoutMs int               `json:"timeout_ms"`      // mandatory, max 600_000
+	OutputCap int               `json:"output_cap"`      // bytes per stream, default 1 MiB
+
+	// Script, when set, is materialised into a private temp file and run as
+	// argv = [interpreter, path]. Argv is then derived, not supplied.
+	//
+	// This is how a script library entry reaches a device without ever
+	// becoming part of a command line. The old HTTP-polling path did
+	// `bash -c "<content>"`, which put attacker-controllable text where the
+	// shell parses it; here the content is only ever file data.
+	Script *Script `json:"script,omitempty"`
+}
+
+// Script is a program body to run under a named interpreter.
+type Script struct {
+	// One of a fixed set the agent recognises — never a path, so a caller
+	// cannot name an arbitrary binary to execute.
+	Interpreter string `json:"interpreter"`
+	Content     string `json:"content"`
 }
 
 // ExecAck signals the agent has accepted an Exec and is starting it.

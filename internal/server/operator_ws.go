@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -17,6 +18,12 @@ const (
 	sessionMaxDuration = 4 * time.Hour
 	sessionIdleTimeout = 15 * time.Minute
 )
+
+// errAgentBackpressure distinguishes "we killed the session because the agent
+// stopped reading" from "the operator went away" on the same channel. The two
+// look identical to the reader otherwise, and they mean very different things
+// in an audit trail.
+var errAgentBackpressure = errors.New("agent backpressure")
 
 // activeSession is the live state of one operator's console session.
 //
@@ -142,6 +149,20 @@ func (s *Server) handleOperatorWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.router.detach(claims.SessionID)
 
+	// Exactly one session.close per session.open, whichever way the session
+	// ends. Emitting per-branch missed three of the five exits — agent
+	// backpressure, the agent closing the session, and a clean operator
+	// disconnect all left an open session that never closed in the trail, which
+	// reads like a shell someone is still sitting in.
+	closeReason := "ended"
+	defer func() {
+		s.audit.Emit(audit.Event{
+			Kind: "session.close", SessionID: claims.SessionID,
+			OrgID: claims.OrgID, DeviceID: claims.DeviceID,
+			Reason: closeReason,
+		})
+	}()
+
 	// Best-effort: when this session ends, tell the agent to tear down any
 	// PTY it may have spawned for this session. Empty ExecID signals
 	// "kill the session-wide PTY" in our protocol.
@@ -216,7 +237,7 @@ func (s *Server) handleOperatorWS(w http.ResponseWriter, r *http.Request) {
 			if !a.Send(f) {
 				// Agent buffer full — kill session, agent is unresponsive.
 				_ = c.Close(websocket.StatusInternalError, "agent backpressure")
-				opErr <- nil
+				opErr <- errAgentBackpressure
 				return
 			}
 		}
@@ -227,31 +248,22 @@ func (s *Server) handleOperatorWS(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			_ = c.Close(websocket.StatusNormalClosure, "session ended")
-			s.audit.Emit(audit.Event{
-				Kind: "session.close", SessionID: claims.SessionID,
-				OrgID: claims.OrgID, DeviceID: claims.DeviceID,
-				Reason: "max duration",
-			})
+			closeReason = "max duration"
 			return
 		case <-idle.C:
 			_ = c.Close(websocket.StatusGoingAway, "idle")
-			s.audit.Emit(audit.Event{
-				Kind: "session.close", SessionID: claims.SessionID,
-				OrgID: claims.OrgID, DeviceID: claims.DeviceID,
-				Reason: "idle timeout",
-			})
+			closeReason = "idle timeout"
 			return
 		case <-sess.closed:
 			_ = c.Close(websocket.StatusGoingAway, "session closed")
+			closeReason = "agent gone"
 			return
 		case err := <-opErr:
 			_ = c.Close(websocket.StatusNormalClosure, "")
-			if err != nil {
-				s.audit.Emit(audit.Event{
-					Kind: "session.close", SessionID: claims.SessionID,
-					OrgID: claims.OrgID, DeviceID: claims.DeviceID,
-					Reason: "operator disconnect",
-				})
+			if errors.Is(err, errAgentBackpressure) {
+				closeReason = "agent backpressure"
+			} else {
+				closeReason = "operator disconnect"
 			}
 			return
 		case f := <-sess.toBrowser:
