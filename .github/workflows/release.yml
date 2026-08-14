@@ -298,4 +298,23 @@ jobs:
           upload /tmp/agent-daemon-manifest.json.minisig \
             "agent-daemon-manifest.json.minisig" "text/plain"
           upload /tmp/agent-daemon-manifest.json "agent-daemon-manifest.json" "application/json"
+
+          # ── Paquets Linux, pour le téléchargement depuis Hasfy-App ──
+          #
+          # Linux n'a plus de GUI Tauri : la console propose directement le
+          # paquet du daemon. goreleaser les a construits dans dist/ à l'étape
+          # précédente ; sans cette publication le lien de la console pointe
+          # vers un objet inexistant.
+          for pkg in dist/*.deb dist/*.rpm; do
+            [ -f "$pkg" ] || continue
+            case "$pkg" in
+              *amd64.deb|*x86_64.deb) remote="hasfy-agent-${VERSION}-linux-amd64.deb"; mime="application/vnd.debian.binary-package" ;;
+              *arm64.deb|*aarch64.deb) remote="hasfy-agent-${VERSION}-linux-arm64.deb"; mime="application/vnd.debian.binary-package" ;;
+              *x86_64.rpm)             remote="hasfy-agent-${VERSION}-linux-amd64.rpm"; mime="application/x-rpm" ;;
+              *aarch64.rpm)            remote="hasfy-agent-${VERSION}-linux-arm64.rpm"; mime="application/x-rpm" ;;
+              *) echo "  ↷ $pkg : nom inattendu, ignoré"; continue ;;
+            esac
+            echo "Uploading $remote"
+            upload "$pkg" "$remote" "$mime"
+          done
           echo "Daemon manifest published and signed for ${VERSION}"
