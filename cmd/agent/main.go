@@ -81,6 +81,27 @@ func main() {
 		}
 	}
 
+	// Under the Windows SCM the process gets no console and no signals: it is
+	// told to start and stop over a control channel, and a process that does
+	// not answer within 30 s is killed. `runAsService` returns false on every
+	// other platform and on a normal console run, so the path below is the
+	// ordinary one.
+	if handled, err := runAsService(runAgent); handled {
+		if err != nil {
+			os.Stderr.WriteString("service: " + err.Error() + "\n")
+			os.Exit(2)
+		}
+		return
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+	runAgent(ctx)
+}
+
+// runAgent is the daemon proper. It returns when ctx is cancelled — by a
+// signal on Unix, by the service control manager on Windows.
+func runAgent(ctx context.Context) {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	envPath := os.Getenv("HASFY_ENV_FILE")
@@ -95,9 +116,6 @@ func main() {
 	if statusPath == "" {
 		statusPath = defaultStatusFilePath()
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	// Read agent.env ourselves rather than trusting the service manager to
 	// have injected it: enrolment *rewrites* this file, and we have to see our

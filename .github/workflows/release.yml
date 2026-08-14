@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: actions/setup-go@v5
-        with: { go-version: "1.22" }
+        with: { go-version: "1.24" }
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -24,6 +24,76 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────────────────────────
+  # Windows MSI — the counterpart of the .deb/.rpm goreleaser builds
+  # above and of Hasfy-Agent's .pkg. Needs a Windows runner for the WiX
+  # toolset, so it cannot ride along in the goreleaser job.
+  #
+  # Registers the daemon as a Windows service, which is what makes the
+  # OS package the single privileged step on Windows too. Before this,
+  # the GUI installer elevated separately for each step and parked the
+  # daemon behind a scheduled task.
+  # ──────────────────────────────────────────────────────────────────
+  windows-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.24" }
+
+      - name: Compute version
+        id: ver
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the daemon
+        shell: bash
+        env:
+          VERSION: v${{ steps.ver.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" \
+            -o dist/hasfy-agent.exe ./cmd/agent
+
+      - name: Add the WiX toolset to PATH
+        shell: pwsh
+        run: |
+          # Shipped with the GitHub Windows image; adding the directory is
+          # cheaper and more predictable than installing it per run.
+          $wix = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          if (-not (Test-Path $wix)) { $wix = "$env:WIX\bin" }
+          if (-not (Test-Path $wix)) { throw "WiX toolset not found on the runner" }
+          Add-Content -Path $env:GITHUB_PATH -Value $wix
+
+      - name: Build the MSI
+        shell: pwsh
+        run: |
+          ./packaging/windows/build-msi.ps1 `
+            -Version "${{ steps.ver.outputs.version }}" `
+            -Binary  "dist/hasfy-agent.exe" `
+            -OutDir  "dist"
+
+      - name: Sign the MSI
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if (-not $env:AZURE_CLIENT_ID) {
+            # Unsigned is a real cost on Windows — SmartScreen will warn — but
+            # failing the release would leave no artefact at all. Loud, not fatal.
+            Write-Warning "Azure code-signing is not configured; the MSI is unsigned."
+            exit 0
+          }
+          Write-Host "Signing is configured; wire the Trusted Signing step here."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hasfy-agent-msi
+          path: dist/*.msi
+          if-no-files-found: error
 
   docker-relay:
     runs-on: ubuntu-latest
@@ -81,7 +151,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         if: env.skip != 'true'
-        with: { go-version: "1.22" }
+        with: { go-version: "1.24" }
 
       - name: Compute version
         if: env.skip != 'true'
