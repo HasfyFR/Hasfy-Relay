@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hasfy agent — Windows installer.
+
+  The Windows half of the rule the other two platforms already follow: the OS
+  package is the single privileged step. The .pkg does it on macOS and the
+  .deb/.rpm on Linux; before this, Windows had neither, so the Tauri GUI
+  installer shelled out to elevated commands for each step and the daemon ended
+  up behind a scheduled task — which does not survive a reboot cleanly, has no
+  restart policy, and reports nothing to the service control manager.
+
+  What this installs:
+    C:\ProgramData\Hasfy\hasfy-agent.exe   the daemon
+    C:\ProgramData\Hasfy\                  config + device key (ACL'd below)
+    service "HasfyAgent"                   LocalSystem, automatic start
+
+  What it deliberately does NOT install: osquery. The agent collects inventory
+  through it, but osquery ships its own signed MSI from osquery.io — bundling
+  it would mean re-distributing someone else's signed binary and owning its
+  update cadence. The daemon treats it as optional: inventory stays paused and
+  is re-checked every 15 minutes, so installing osquery afterwards needs no
+  restart. On Linux the package metadata declares the dependency and apt/dnf
+  pulls it in; Windows and macOS have no equivalent.
+
+  What it deliberately does NOT do: enrol. The daemon enrols itself on first
+  start (cmd/agent/enroll.go) because it is already SYSTEM — so nothing here
+  writes a credential and nothing afterwards asks for elevation.
+
+  Built by packaging/windows/build-msi.ps1, which supplies Version and
+  SourceBinary.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+
+  <Product Id="*"
+           Name="Hasfy Agent"
+           Language="1036"
+           Version="$(var.Version)"
+           Manufacturer="Hasfy"
+           UpgradeCode="7C1D9E4A-3B62-4E58-9A1F-2D6C8B5E0A73">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="Hasfy endpoint agent"
+             Manufacturer="Hasfy" />
+
+    <!--
+      Schedule the removal *after* the new files are laid down, so an upgrade
+      never leaves the machine with the service unregistered between the two.
+      AllowSameVersionUpgrades lets a rebuild of the same version reinstall
+      cleanly instead of erroring out.
+    -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallExecute"
+                  DowngradeErrorMessage="A newer version of the Hasfy agent is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- The daemon runs as SYSTEM; a per-user install would be meaningless. -->
+    <Condition Message="Administrator privileges are required to install the Hasfy agent.">
+      <![CDATA[Privileged]]>
+    </Condition>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="INSTALLFOLDER" Name="Hasfy" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="AgentBinary" Guid="A4E7B21C-96F3-4D08-8E5B-1C7A0F9D3E62">
+        <File Id="HasfyAgentExe"
+              Name="hasfy-agent.exe"
+              Source="$(var.SourceBinary)"
+              KeyPath="yes" />
+
+        <!--
+          LocalSystem, automatic. `start="auto"` rather than delayed: the agent
+          is how a machine is reached when something is wrong, so it should be
+          up as early as it can be.
+        -->
+        <ServiceInstall Id="HasfyAgentService"
+                        Name="HasfyAgent"
+                        DisplayName="Hasfy Agent"
+                        Description="Hasfy endpoint agent: inventory, metrics and remote administration."
+                        Type="ownProcess"
+                        Start="auto"
+                        Account="LocalSystem"
+                        ErrorControl="normal"
+                        Vital="yes" />
+
+        <!--
+          Restart on failure. A daemon that dies on a transient fault and stays
+          dead is a machine that silently drops off the fleet; the third-failure
+          reset window keeps a crash loop from hammering the box.
+        -->
+        <util:ServiceConfig ServiceName="HasfyAgent"
+                            FirstFailureActionType="restart"
+                            SecondFailureActionType="restart"
+                            ThirdFailureActionType="restart"
+                            RestartServiceDelayInSeconds="30"
+                            ResetPeriodInDays="1" />
+
+        <ServiceControl Id="HasfyAgentControl"
+                        Name="HasfyAgent"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </Component>
+
+      <!--
+        The directory holds device.key and, briefly, the one-shot enrolment
+        secret. Inheritance is broken and only SYSTEM and Administrators are
+        granted access: under CommonAppDataFolder the default ACL would let any
+        authenticated user read it.
+      -->
+      <Component Id="AgentDataPermissions" Guid="D93F5A17-4C28-4B7E-A0D6-8F2E1B4C9057" KeyPath="yes">
+        <CreateFolder>
+          <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+          <util:PermissionEx User="Administrators" GenericAll="yes" />
+        </CreateFolder>
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="MainFeature" Title="Hasfy Agent" Level="1">
+      <ComponentRef Id="AgentBinary" />
+      <ComponentRef Id="AgentDataPermissions" />
+    </Feature>
+
+    <!--
+      Config and the device key survive an uninstall on purpose, mirroring the
+      Linux packages: a plain remove keeps the machine's identity so a reinstall
+      does not have to re-enrol. `hasfy-agent uninstall` is what wipes them.
+    -->
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://hasfy.fr" />
+
+  </Product>
+</Wix>

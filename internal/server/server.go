@@ -7,6 +7,7 @@
 //	GET  /agent/ws         — agent WS, requires Authorization: Bearer <agent-jwt>
 //	POST /api/devices      — list online devices for an org (svc HMAC)
 //	POST /api/console      — mint session token for an operator (svc HMAC)
+//	POST /api/exec         — run one command on one device (svc HMAC)
 //	GET  /console/ws       — operator WS, ?token=<session-jwt>
 //
 // All svc-HMAC endpoints expect headers:
@@ -18,6 +19,7 @@
 package server
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -42,8 +44,12 @@ type Config struct {
 	SessionSecret   []byte   // HS256 — verifies session tokens we issue
 	SvcSecret       []byte   // HMAC — Hasfy-App service-to-service auth
 	OperatorOrigins []string // accepted Origin: headers on /console/ws (e.g. "app.hasfy.fr")
-	MaxFrameBytes   int64    // WS frame size cap
-	WriteBufSize    int      // outbound channel size per agent
+	// Hasfy-App origin the audit trail is forwarded to. Empty means
+	// stdout-only: the relay still works, the console just has no persisted
+	// record of console sessions.
+	AppURL        string
+	MaxFrameBytes int64 // WS frame size cap
+	WriteBufSize  int   // outbound channel size per agent
 }
 
 type Server struct {
@@ -53,6 +59,15 @@ type Server struct {
 	audit    *audit.Logger
 	router   *router
 	log      *slog.Logger
+	// Owned here so Start can run its drain loop; nil when not configured.
+	forwarder *audit.Forwarder
+}
+
+// StartAuditForwarder runs the background drain that ships audit events to
+// Hasfy-App. Safe to call when forwarding is not configured — it returns
+// immediately. Call it once, in a goroutine, for the lifetime of the process.
+func (s *Server) StartAuditForwarder(ctx context.Context) {
+	s.forwarder.Run(ctx)
 }
 
 func New(cfg Config, log *slog.Logger) (*Server, error) {
@@ -73,10 +88,12 @@ func New(cfg Config, log *slog.Logger) (*Server, error) {
 		cfg:      cfg,
 		verifier: v,
 		reg:      registry.New(),
-		audit:    audit.NewStdout(),
 		log:      log,
 	}
 	srv.initRouter()
+	// One forwarder, owned by the server so StartAuditForwarder can drain it.
+	srv.forwarder = audit.NewForwarder(cfg.AppURL, cfg.SvcSecret)
+	srv.audit = audit.NewStdout().WithForwarder(srv.forwarder)
 	return srv, nil
 }
 
@@ -87,6 +104,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /agent/ws", s.handleAgentWS)
 	mux.HandleFunc("POST /api/devices", s.handleListDevices)
 	mux.HandleFunc("POST /api/console", s.handleIssueSession)
+	mux.HandleFunc("POST /api/exec", s.handleExec)
 	mux.HandleFunc("GET /console/ws", s.handleOperatorWS)
 	return mux
 }

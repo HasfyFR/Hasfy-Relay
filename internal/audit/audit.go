@@ -19,7 +19,7 @@ import (
 // Event is the NDJSON shape Filebeat will ship.
 type Event struct {
 	Ts        time.Time         `json:"@timestamp"`
-	Kind      string            `json:"kind"`        // "session.open", "exec.start", "exec.output", "exec.exit", "session.close", "auth.fail"
+	Kind      string            `json:"kind"` // "session.open", "exec.start", "exec.output", "exec.exit", "session.close", "auth.fail"
 	OrgID     string            `json:"org_id,omitempty"`
 	DeviceID  string            `json:"device_id,omitempty"`
 	SessionID string            `json:"session_id,omitempty"`
@@ -40,11 +40,21 @@ type Event struct {
 type Logger struct {
 	mu sync.Mutex
 	w  io.Writer
+	// Optional second sink: Hasfy-App, so the console has a persisted trail
+	// rather than only what the cluster log pipeline happened to keep.
+	forwarder *Forwarder
 }
 
 func NewStdout() *Logger { return &Logger{w: os.Stdout} }
 
 func New(w io.Writer) *Logger { return &Logger{w: w} }
+
+// WithForwarder attaches the Hasfy-App sink. Nil is valid and means
+// stdout-only, which is what a relay deployed without the app URL does.
+func (l *Logger) WithForwarder(f *Forwarder) *Logger {
+	l.forwarder = f
+	return l
+}
 
 // Emit writes one NDJSON line. Errors are swallowed: audit is best-effort,
 // it must never crash the data path. (We surface them via /metrics counter
@@ -61,4 +71,22 @@ func (l *Logger) Emit(e Event) {
 	l.mu.Lock()
 	_, _ = l.w.Write(b)
 	l.mu.Unlock()
+
+	// Only org-scoped events are forwarded. Hasfy-App stores the trail in a
+	// per-organisation table, so an event with no org has nowhere to go — and
+	// every auth.fail from an unverifiable caller is exactly that: a bad agent
+	// token, a bad session token or an svc HMAC mismatch tells us nothing about
+	// which organisation it claimed to be. Those stay on stdout for the cluster
+	// log pipeline, which is the right sink for them.
+	//
+	// Filtering here rather than letting the app reject them also protects the
+	// batch: one unstorable event must not cost the fifty legitimate ones
+	// travelling with it.
+	if e.OrgID == "" {
+		return
+	}
+
+	// Non-blocking: an unreachable Hasfy-App must not stall the data path
+	// this logger observes.
+	l.forwarder.Enqueue(e)
 }

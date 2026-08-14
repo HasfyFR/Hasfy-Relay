@@ -8,3 +8,13 @@
 .env
 .env.*
 coverage.txt
+
+# Signing key material. The minisign keypair that authenticates daemon
+# manifests must never be committed: the public half is compiled into every
+# installer, so the private half is root on the whole fleet. It lives in
+# GitHub Actions secrets (MINISIGN_SECRET_KEY) and nowhere in a working tree.
+*.key
+!*.pub.key
+hasfy-updater.*
+minisign.key
+*.minisig

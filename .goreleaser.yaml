@@ -52,6 +52,60 @@ archives:
       - LICENSE*
       - README.md
 
+# nfpm: native .deb / .rpm so the package manager is the single privileged step.
+#
+# Before this, a Linux install ran the Tauri installer, which shelled out to
+# `pkexec`/`sudo` separately for the Elastic Agent, for registering the relay
+# service, and again on every daemon self-update. The package manager already
+# authenticates once and runs as root; the daemon it installs enrols itself.
+nfpms:
+  - id: agent-packages
+    ids: [agent]
+    package_name: hasfy-agent
+    vendor: Hasfy
+    homepage: https://hasfy.fr
+    maintainer: Hasfy <support@hasfy.fr>
+    description: |-
+      Hasfy endpoint agent.
+      Enrols itself on first start via the Hasfy device authorization flow;
+      no token to copy and no elevation prompt after installation.
+    license: Proprietary
+    formats: [deb, rpm]
+
+    # osquery is how the agent collects inventory (cmd/agent/inventory.go).
+    # It was not declared anywhere, so a fresh install had no CMDB at all
+    # until somebody installed it by hand — and the only trace was one line
+    # in a service log. Declaring it lets apt/dnf pull it in during the same
+    # privileged step that installs the agent, which is the whole point of
+    # shipping a native package.
+    #
+    # Not vendored: osquery is ~20 MB and ships signed from osquery.io, so
+    # bundling it would mean re-distributing someone else's signed binary and
+    # taking over its update cadence.
+    depends:
+      - osquery
+    bindir: /opt/hasfy
+    contents:
+      - src: packaging/linux/hasfy-agent.service
+        dst: /lib/systemd/system/hasfy-agent.service
+      # Config lives outside the package payload: the daemon writes agent.env
+      # itself during enrolment, and declaring it here would make the package
+      # manager fight those writes on every upgrade.
+      - dst: /etc/hasfy
+        type: dir
+        file_info:
+          mode: 0750
+    scripts:
+      postinstall: packaging/linux/postinstall.sh
+      preremove: packaging/linux/preremove.sh
+      postremove: packaging/linux/postremove.sh
+    rpm:
+      signature:
+        key_file: "{{ .Env.LINUX_GPG_KEY_PATH }}"
+    deb:
+      signature:
+        key_file: "{{ .Env.LINUX_GPG_KEY_PATH }}"
+
 checksum:
   name_template: "checksums.txt"
 

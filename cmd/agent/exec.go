@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	wsReadLimit       = 1 << 20
-	defaultTimeoutMs  = 60_000
-	maxParallelExec   = 8 // bound resource usage on the device
-	registerTimeout   = 10 * time.Second
+	wsReadLimit      = 1 << 20
+	defaultTimeoutMs = 60_000
+	maxParallelExec  = 8 // bound resource usage on the device
+	registerTimeout  = 10 * time.Second
 )
 
 // runOnce performs one full session: connect, register, pump frames until
@@ -107,7 +107,12 @@ func runOnce(parent context.Context, log *slog.Logger, url, token string, reg pr
 		case proto.TypePong:
 			// no-op
 		case proto.TypeExec:
-			if f.Exec == nil || f.SessionID == "" || f.ExecID == "" || len(f.Exec.Argv) == 0 {
+			if f.Exec == nil || f.SessionID == "" || f.ExecID == "" {
+				continue
+			}
+			// Either an argv or a script body; a frame with neither is
+			// meaningless and must not reach runExec.
+			if len(f.Exec.Argv) == 0 && f.Exec.Script == nil {
 				continue
 			}
 			ectx, ecancel := context.WithCancel(ctx)
@@ -121,7 +126,7 @@ func runOnce(parent context.Context, log *slog.Logger, url, token string, reg pr
 				// At cap. Refuse politely.
 				out <- proto.Frame{
 					Type: proto.TypeExit, SessionID: f.SessionID, ExecID: f.ExecID,
-					Exit: &proto.Exit{ExitCode: -1, EndedAt: time.Now()},
+					Exit:  &proto.Exit{ExitCode: -1, EndedAt: time.Now()},
 					Error: &proto.ErrorMsg{Code: "busy", Message: "agent at exec capacity"},
 				}
 				ecancel()
@@ -216,9 +221,35 @@ func runExec(ctx context.Context, log *slog.Logger, f proto.Frame, out chan<- pr
 	ectx, cancel := context.WithTimeout(ctx, time.Duration(tm)*time.Millisecond)
 	defer cancel()
 
+	// A script body is written to a private file and turned into
+	// `[interpreter, path]` — see script.go. The argv-only rule below then
+	// holds for scripts too.
+	argv := f.Exec.Argv
+	if f.Exec.Script != nil {
+		derived, cleanup, err := materialiseScript(f.Exec.Script)
+		if err != nil {
+			out <- proto.Frame{
+				Type: proto.TypeExit, SessionID: f.SessionID, ExecID: f.ExecID,
+				Exit:  &proto.Exit{ExitCode: -1, EndedAt: time.Now()},
+				Error: &proto.ErrorMsg{Code: "script_prepare_failed", Message: err.Error()},
+			}
+			return
+		}
+		defer cleanup()
+		argv = derived
+	}
+	if len(argv) == 0 {
+		out <- proto.Frame{
+			Type: proto.TypeExit, SessionID: f.SessionID, ExecID: f.ExecID,
+			Exit:  &proto.Exit{ExitCode: -1, EndedAt: time.Now()},
+			Error: &proto.ErrorMsg{Code: "exec_empty_argv", Message: "no command to run"},
+		}
+		return
+	}
+
 	// IMPORTANT: argv-only. Never pass to a shell. CommandContext does not
 	// invoke a shell.
-	cmd := exec.CommandContext(ectx, f.Exec.Argv[0], f.Exec.Argv[1:]...)
+	cmd := exec.CommandContext(ectx, argv[0], argv[1:]...)
 	if f.Exec.Cwd != "" {
 		cmd.Dir = f.Exec.Cwd
 	}
@@ -248,7 +279,7 @@ func runExec(ctx context.Context, log *slog.Logger, f proto.Frame, out chan<- pr
 	if err := cmd.Start(); err != nil {
 		out <- proto.Frame{
 			Type: proto.TypeExit, SessionID: f.SessionID, ExecID: f.ExecID,
-			Exit: &proto.Exit{ExitCode: -1, EndedAt: time.Now()},
+			Exit:  &proto.Exit{ExitCode: -1, EndedAt: time.Now()},
 			Error: &proto.ErrorMsg{Code: "exec_start_failed", Message: err.Error()},
 		}
 		return

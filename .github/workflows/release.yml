@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
       - uses: actions/setup-go@v5
-        with: { go-version: "1.22" }
+        with: { go-version: "1.24" }
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
@@ -24,6 +24,76 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ──────────────────────────────────────────────────────────────────
+  # Windows MSI — the counterpart of the .deb/.rpm goreleaser builds
+  # above and of Hasfy-Agent's .pkg. Needs a Windows runner for the WiX
+  # toolset, so it cannot ride along in the goreleaser job.
+  #
+  # Registers the daemon as a Windows service, which is what makes the
+  # OS package the single privileged step on Windows too. Before this,
+  # the GUI installer elevated separately for each step and parked the
+  # daemon behind a scheduled task.
+  # ──────────────────────────────────────────────────────────────────
+  windows-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.24" }
+
+      - name: Compute version
+        id: ver
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the daemon
+        shell: bash
+        env:
+          VERSION: v${{ steps.ver.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" \
+            -o dist/hasfy-agent.exe ./cmd/agent
+
+      - name: Add the WiX toolset to PATH
+        shell: pwsh
+        run: |
+          # Shipped with the GitHub Windows image; adding the directory is
+          # cheaper and more predictable than installing it per run.
+          $wix = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          if (-not (Test-Path $wix)) { $wix = "$env:WIX\bin" }
+          if (-not (Test-Path $wix)) { throw "WiX toolset not found on the runner" }
+          Add-Content -Path $env:GITHUB_PATH -Value $wix
+
+      - name: Build the MSI
+        shell: pwsh
+        run: |
+          ./packaging/windows/build-msi.ps1 `
+            -Version "${{ steps.ver.outputs.version }}" `
+            -Binary  "dist/hasfy-agent.exe" `
+            -OutDir  "dist"
+
+      - name: Sign the MSI
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          if (-not $env:AZURE_CLIENT_ID) {
+            # Unsigned is a real cost on Windows — SmartScreen will warn — but
+            # failing the release would leave no artefact at all. Loud, not fatal.
+            Write-Warning "Azure code-signing is not configured; the MSI is unsigned."
+            exit 0
+          }
+          Write-Host "Signing is configured; wire the Trusted Signing step here."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hasfy-agent-msi
+          path: dist/*.msi
+          if-no-files-found: error
 
   docker-relay:
     runs-on: ubuntu-latest
@@ -81,7 +151,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         if: env.skip != 'true'
-        with: { go-version: "1.22" }
+        with: { go-version: "1.24" }
 
       - name: Compute version
         if: env.skip != 'true'
@@ -111,8 +181,43 @@ jobs:
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           VERSION: v${{ steps.ver.outputs.version }}
+          # Same minisign key the Hasfy-Agent release pipeline uses. The
+          # installer has the matching public key compiled in as
+          # HASFY_UPDATER_PUBKEY and refuses to apply a daemon update whose
+          # manifest is unsigned or badly signed.
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_KEY_PASSWORD: ${{ secrets.MINISIGN_KEY_PASSWORD }}
         run: |
           set -eu
+
+          # The manifest is the root of trust for the daemon self-updater: it
+          # names the artifact URL and its sha256, and the binary it points at
+          # runs as root with a remote PTY behind it. The per-artifact sha256
+          # lives *inside* the manifest, so it authenticates nothing on its
+          # own — without a detached signature, write access to this public
+          # bucket is root on the whole fleet. Refuse to publish unsigned.
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "::error::MINISIGN_SECRET_KEY is not set in this repository."
+            echo
+            echo "The daemon manifest is the root of trust for hasfy-agent self-update:"
+            echo "it names the binary URL and its sha256, and that binary runs as root"
+            echo "with a remote PTY behind it. The sha256 lives *inside* the manifest, so"
+            echo "it authenticates nothing on its own — write access to the public bucket"
+            echo "would be root on the whole fleet."
+            echo
+            echo "Hasfy-Agent/src-tauri/src/updater/daemon.rs verifies a detached minisign"
+            echo "signature and refuses an unsigned manifest, so publishing without one"
+            echo "would not be insecure — it would simply disable daemon auto-update."
+            echo
+            echo "Fix: copy the two secrets that already exist in the Hasfy-Agent repo:"
+            echo "  gh secret set MINISIGN_SECRET_KEY   --repo HasfyFR/Hasfy-Relay"
+            echo "  gh secret set MINISIGN_KEY_PASSWORD --repo HasfyFR/Hasfy-Relay"
+            echo "They must be the same key pair whose public half is baked into the"
+            echo "installer as HASFY_UPDATER_PUBKEY, or clients will reject the signature."
+            exit 1
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+
           upload() {
             local file="$1" remote="$2" mime="$3"
             local code
@@ -169,7 +274,47 @@ jobs:
           EOF
           echo "Manifest:"; cat /tmp/agent-daemon-manifest.json
 
-          # Manifest goes last so a partial binary upload (above) doesn't
-          # leave clients pointing at a missing artifact.
+          # Sign the manifest bytes exactly as they will be served. The
+          # client verifies the raw response before parsing it, so any
+          # re-formatting between here and upload would break verification.
+          KEY_FILE=$(mktemp /tmp/minisign.key.XXXXXX)
+          trap 'rm -f "$KEY_FILE"' EXIT
+          echo "$MINISIGN_SECRET_KEY" | base64 -d > "$KEY_FILE"
+          if [ -n "${MINISIGN_KEY_PASSWORD:-}" ]; then
+            echo "$MINISIGN_KEY_PASSWORD" | minisign -S -H -s "$KEY_FILE" \
+              -m /tmp/agent-daemon-manifest.json \
+              -x /tmp/agent-daemon-manifest.json.minisig >/dev/null
+          else
+            minisign -S -H -s "$KEY_FILE" \
+              -m /tmp/agent-daemon-manifest.json \
+              -x /tmp/agent-daemon-manifest.json.minisig </dev/null >/dev/null
+          fi
+
+          # Signature first, manifest last, so the new manifest is never
+          # served without a matching signature already in place. The
+          # remaining race — a client reading the old manifest and the new
+          # signature — fails verification, which is fail-closed: the daemon
+          # keeps its current version and retries at the next 6 h tick.
+          upload /tmp/agent-daemon-manifest.json.minisig \
+            "agent-daemon-manifest.json.minisig" "text/plain"
           upload /tmp/agent-daemon-manifest.json "agent-daemon-manifest.json" "application/json"
-          echo "Daemon manifest published for ${VERSION}"
+
+          # ── Paquets Linux, pour le téléchargement depuis Hasfy-App ──
+          #
+          # Linux n'a plus de GUI Tauri : la console propose directement le
+          # paquet du daemon. goreleaser les a construits dans dist/ à l'étape
+          # précédente ; sans cette publication le lien de la console pointe
+          # vers un objet inexistant.
+          for pkg in dist/*.deb dist/*.rpm; do
+            [ -f "$pkg" ] || continue
+            case "$pkg" in
+              *amd64.deb|*x86_64.deb) remote="hasfy-agent-${VERSION}-linux-amd64.deb"; mime="application/vnd.debian.binary-package" ;;
+              *arm64.deb|*aarch64.deb) remote="hasfy-agent-${VERSION}-linux-arm64.deb"; mime="application/vnd.debian.binary-package" ;;
+              *x86_64.rpm)             remote="hasfy-agent-${VERSION}-linux-amd64.rpm"; mime="application/x-rpm" ;;
+              *aarch64.rpm)            remote="hasfy-agent-${VERSION}-linux-arm64.rpm"; mime="application/x-rpm" ;;
+              *) echo "  ↷ $pkg : nom inattendu, ignoré"; continue ;;
+            esac
+            echo "Uploading $remote"
+            upload "$pkg" "$remote" "$mime"
+          done
+          echo "Daemon manifest published and signed for ${VERSION}"

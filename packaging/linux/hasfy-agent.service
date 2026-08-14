@@ -1,0 +1,26 @@
+[Unit]
+Description=Hasfy endpoint agent
+Documentation=https://hasfy.fr
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/hasfy/hasfy-agent
+Restart=always
+RestartSec=10
+
+# The daemon reads /etc/hasfy/agent.env itself rather than taking it via
+# EnvironmentFile: it *rewrites* that file during self-enrolment and has to see
+# its own writes without a restart. An EnvironmentFile would also make systemd
+# refuse to start the unit on a fresh install, where the file does not exist
+# yet — which is precisely the state self-enrolment exists to resolve.
+
+# Deliberately unsandboxed. The daemon spawns an interactive root PTY for the
+# web console; ProtectHome / ProtectSystem or an empty CapabilityBoundingSet
+# make /root unreachable and leave operators with a shell that errors on every
+# profile file. Confining this daemon means removing the feature.
+
+[Install]
+WantedBy=multi-user.target
