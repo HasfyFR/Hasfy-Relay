@@ -12,6 +12,15 @@ set -eu
 install -d -o root -g root -m 0750 /etc/hasfy
 install -d -o root -g root -m 0755 /var/log/hasfy
 
+# `depends: osquery` in the package metadata normally guarantees this. It can
+# still be missing on a box where the package was force-installed, and the
+# agent would then run with an empty CMDB — visible only in its log.
+if ! command -v osqueryi >/dev/null 2>&1; then
+    echo "warning: osqueryi was not found. Inventory collection will stay" >&2
+    echo "         paused until it is installed; the agent re-checks every" >&2
+    echo "         15 minutes and needs no restart." >&2
+fi
+
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
     systemctl enable hasfy-agent.service || true

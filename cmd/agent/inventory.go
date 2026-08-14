@@ -54,6 +54,10 @@ const (
 	// query cannot stall the whole collection cycle.
 	osqueryTimeout = 60 * time.Second
 
+	// How often to re-check for osquery when it is missing. Slow on purpose:
+	// this is a state an operator has to fix, so polling it hard buys nothing.
+	noOsqueryRetryInterval = 15 * time.Minute
+
 	inventoryHTTPTimeout = 60 * time.Second
 )
 
@@ -295,9 +299,15 @@ func runInventoryReporter(
 		snapshots, err := collectInventory(ctx, log)
 		switch {
 		case errors.Is(err, errNoOsquery):
-			log.Warn("osquery is not installed — inventory reporting is disabled; " +
-				"install osquery and restart the agent")
-			return
+			// Keep looking rather than giving up for good. Returning here
+			// disabled inventory for the lifetime of the process: a machine
+			// where osquery arrived later — installed by hand, or by the
+			// package manager a moment after us — kept an empty CMDB until
+			// somebody thought to restart the agent, with one line in a
+			// service log as the only trace.
+			log.Warn("osquery not found — inventory paused",
+				"retry_in", noOsqueryRetryInterval.String())
+			next = noOsqueryRetryInterval
 		case err != nil:
 			if ctx.Err() != nil {
 				return

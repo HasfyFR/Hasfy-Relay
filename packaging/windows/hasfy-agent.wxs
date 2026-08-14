@@ -14,6 +14,14 @@
     C:\ProgramData\Hasfy\                  config + device key (ACL'd below)
     service "HasfyAgent"                   LocalSystem, automatic start
 
+  What it deliberately does NOT install: osquery. The agent collects inventory
+  through it, but osquery ships its own signed MSI from osquery.io — bundling
+  it would mean re-distributing someone else's signed binary and owning its
+  update cadence. The daemon treats it as optional: inventory stays paused and
+  is re-checked every 15 minutes, so installing osquery afterwards needs no
+  restart. On Linux the package metadata declares the dependency and apt/dnf
+  pulls it in; Windows and macOS have no equivalent.
+
   What it deliberately does NOT do: enrol. The daemon enrols itself on first
   start (cmd/agent/enroll.go) because it is already SYSTEM — so nothing here
   writes a credential and nothing afterwards asks for elevation.

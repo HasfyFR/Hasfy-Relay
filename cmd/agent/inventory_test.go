@@ -238,3 +238,50 @@ func TestPostInventoryTreatsServerErrorAsTransient(t *testing.T) {
 		t.Fatal("a 502 must not read as refusal")
 	}
 }
+
+// A machine without osquery installs cleanly and reports an empty CMDB. The
+// reporter used to give up for good on the first miss, so osquery arriving
+// later — installed by hand, or by the package manager moments after us —
+// left the machine with no inventory until somebody restarted the agent.
+func TestMissingOsqueryPausesInventoryWithoutDisablingIt(t *testing.T) {
+	src, err := os.ReadFile("inventory.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+
+	i := strings.Index(s, "case errors.Is(err, errNoOsquery):")
+	if i < 0 {
+		t.Fatal("the missing-osquery branch is gone")
+	}
+	// Look at that branch only, up to the next case.
+	branch := s[i:]
+	if j := strings.Index(branch[1:], "\n\t\tcase "); j > 0 {
+		branch = branch[:j]
+	}
+
+	if strings.Contains(branch, "return") {
+		t.Error("a missing osquery must not disable inventory for the process lifetime")
+	}
+	if !strings.Contains(branch, "noOsqueryRetryInterval") {
+		t.Error("the branch must schedule a re-check")
+	}
+}
+
+// osquery has to come from somewhere. On Linux the package metadata is what
+// makes the single privileged step install it too.
+func TestLinuxPackagesDependOnOsquery(t *testing.T) {
+	cfg, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(cfg)
+
+	depends := strings.Index(s, "depends:")
+	if depends < 0 {
+		t.Fatal("the .deb/.rpm declare no dependencies")
+	}
+	if !strings.Contains(s[depends:depends+200], "osquery") {
+		t.Error("osquery is not declared as a package dependency")
+	}
+}
