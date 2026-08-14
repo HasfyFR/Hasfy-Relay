@@ -316,12 +316,16 @@ jobs:
 
           for pkg in dist/*.deb dist/*.rpm; do
             [ -f "$pkg" ] || continue
+            # goreleaser nomme en `hasfy-agent_1.1.0_linux_amd64.{deb,rpm}` —
+            # underscores et `amd64`/`arm64` pour les deux formats. Les motifs
+            # `*x86_64.rpm` ne matchaient donc jamais, et le `.rpm` était
+            # ignoré en silence pendant que le `.deb` passait.
             case "$pkg" in
-              *amd64.deb|*x86_64.deb) remote="hasfy-agent-${VERSION}-linux-amd64.deb"; mime="application/vnd.debian.binary-package" ;;
-              *arm64.deb|*aarch64.deb) remote="hasfy-agent-${VERSION}-linux-arm64.deb"; mime="application/vnd.debian.binary-package" ;;
-              *x86_64.rpm)             remote="hasfy-agent-${VERSION}-linux-amd64.rpm"; mime="application/x-rpm" ;;
-              *aarch64.rpm)            remote="hasfy-agent-${VERSION}-linux-arm64.rpm"; mime="application/x-rpm" ;;
-              *) echo "  ↷ $pkg : nom inattendu, ignoré"; continue ;;
+              *_amd64.deb) remote="hasfy-agent-${VERSION}-linux-amd64.deb"; mime="application/vnd.debian.binary-package" ;;
+              *_arm64.deb) remote="hasfy-agent-${VERSION}-linux-arm64.deb"; mime="application/vnd.debian.binary-package" ;;
+              *_amd64.rpm) remote="hasfy-agent-${VERSION}-linux-amd64.rpm"; mime="application/x-rpm" ;;
+              *_arm64.rpm) remote="hasfy-agent-${VERSION}-linux-arm64.rpm"; mime="application/x-rpm" ;;
+              *) echo "::warning::$pkg : nom inattendu, ignoré"; continue ;;
             esac
             echo "Uploading $remote"
             upload "$pkg" "$remote" "$mime"
