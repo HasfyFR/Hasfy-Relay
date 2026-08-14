@@ -180,6 +180,7 @@ jobs:
         if: env.skip != 'true'
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: v${{ steps.ver.outputs.version }}
           # Same minisign key the Hasfy-Agent release pipeline uses. The
           # installer has the matching public key compiled in as
@@ -302,9 +303,17 @@ jobs:
           # ── Paquets Linux, pour le téléchargement depuis Hasfy-App ──
           #
           # Linux n'a plus de GUI Tauri : la console propose directement le
-          # paquet du daemon. goreleaser les a construits dans dist/ à l'étape
-          # précédente ; sans cette publication le lien de la console pointe
-          # vers un objet inexistant.
+          # paquet du daemon, donc il doit exister dans ce bucket.
+          #
+          # Récupérés depuis la release GitHub et non depuis dist/ : goreleaser
+          # tourne dans un autre job, donc sur un autre runner — dist/ est vide
+          # ici, et la boucle ne trouvait rien sans rien signaler.
+          mkdir -p dist
+          gh release download "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.deb' --pattern '*.rpm' \
+            --dir dist --clobber
+
           for pkg in dist/*.deb dist/*.rpm; do
             [ -f "$pkg" ] || continue
             case "$pkg" in
