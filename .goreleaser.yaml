@@ -99,12 +99,16 @@ nfpms:
       postinstall: packaging/linux/postinstall.sh
       preremove: packaging/linux/preremove.sh
       postremove: packaging/linux/postremove.sh
-    rpm:
-      signature:
-        key_file: "{{ .Env.LINUX_GPG_KEY_PATH }}"
-    deb:
-      signature:
-        key_file: "{{ .Env.LINUX_GPG_KEY_PATH }}"
+    # Signature GPG des paquets : désactivée tant que la clé n'est pas dans ce
+    # dépôt. `LINUX_GPG_KEY` vit dans Hasfy-Agent ; ici le template
+    # `{{ .Env.LINUX_GPG_KEY_PATH }}` échouait au rendu, ce qui faisait
+    # échouer goreleaser avant de produire le moindre paquet — donc aucun
+    # .deb ni .rpm publié, alors que la console les propose au téléchargement.
+    #
+    # Pour les signer : copier le secret puis rétablir les blocs
+    #   gh secret set LINUX_GPG_KEY --repo HasfyFR/Hasfy-Relay
+    #   rpm: { signature: { key_file: "{{ .Env.LINUX_GPG_KEY_PATH }}" } }
+    #   deb: { signature: { key_file: "{{ .Env.LINUX_GPG_KEY_PATH }}" } }
 
 checksum:
   name_template: "checksums.txt"
