@@ -82,7 +82,7 @@ nfpms:
     # Not vendored: osquery is ~20 MB and ships signed from osquery.io, so
     # bundling it would mean re-distributing someone else's signed binary and
     # taking over its update cadence.
-    depends:
+    dependencies:
       - osquery
     bindir: /opt/hasfy
     contents:
