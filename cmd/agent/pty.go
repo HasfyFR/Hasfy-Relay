@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/proto"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
 )
 
 // Cap on how many concurrent PTY shells one agent may host. Each session

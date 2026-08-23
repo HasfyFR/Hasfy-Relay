@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/audit"
-	"github.com/HasfyFR/Hasfy-Relay/internal/auth"
-	"github.com/HasfyFR/Hasfy-Relay/internal/proto"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/auth"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
 	"github.com/coder/websocket"
 )
 

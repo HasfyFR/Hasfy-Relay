@@ -57,3 +57,14 @@ go run ./cmd/agent -relay wss://localhost:8443/agent/ws -token <devtoken>
 ## License
 
 Proprietary — Hasfy SAS, all rights reserved.
+
+## Développement — module privé
+
+Le module est hébergé sur GitLab interne. Poser une fois :
+
+```bash
+export GOPRIVATE=gitlab.hasfy.fr
+```
+
+Sans cela, `go mod download` interroge `proxy.golang.org`, qui ne peut pas
+atteindre un dépôt privé.

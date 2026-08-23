@@ -32,9 +32,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/audit"
-	"github.com/HasfyFR/Hasfy-Relay/internal/auth"
-	"github.com/HasfyFR/Hasfy-Relay/internal/registry"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/auth"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/registry"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

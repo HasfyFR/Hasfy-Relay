@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/audit"
-	"github.com/HasfyFR/Hasfy-Relay/internal/proto"
-	"github.com/HasfyFR/Hasfy-Relay/internal/registry"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/registry"
 	"github.com/coder/websocket"
 )
 

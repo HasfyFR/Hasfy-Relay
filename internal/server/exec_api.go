@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/audit"
-	"github.com/HasfyFR/Hasfy-Relay/internal/proto"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
 	"github.com/google/uuid"
 )
 

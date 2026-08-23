@@ -1,0 +1,58 @@
+# =============================================================================
+# Hasfy-Relay — pipeline GitLab CI (daemon d'accès distant)
+# =============================================================================
+# Remplace .github/workflows/{ci,release}.yml (~380 lignes).
+#
+# Ajoute deux contrôles absents de la chaîne GitHub, qui se limitait à
+# `go vet` + `go build` + `go test` :
+#   - golangci-lint
+#   - govulncheck
+# Ce daemon tourne EN ROOT sur les postes clients : l'absence de scan de
+# vulnérabilités y était le manque le plus difficile à justifier.
+# =============================================================================
+
+include:
+  - project: hasfy/tools/hasfy-ci-templates
+    ref: v1.0.8
+    file:
+      - templates/base.yml
+      - templates/vault.yml
+      - templates/go.yml
+      - templates/security.yml
+      - templates/docker.yml
+      - templates/gitops.yml
+      - templates/release.yml
+
+variables:
+  APP_NAME: hasfy-relay
+  GO_VERSION: "1.24"
+  # Le chemin du module reste github.com/HasfyFR/Hasfy-Relay pour l'instant
+  # (D-04) : tous les packages sont sous internal/, donc aucun consommateur
+  # externe ne peut exister, mais le renommage se fait dans un commit dédié.
+  GOPRIVATE: "gitlab.hasfy.fr"
+
+# Projet Go : pas de dépendances npm à auditer.
+security:deps:
+  rules: [{when: never}]
+
+deploy:production:
+  extends: .gitops-bump
+  needs: ["docker:build", "security:container"]
+  variables: {ENV: production}
+  environment: {name: production, url: "https://relay.hasfy.fr"}
+  resource_group: relay-production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: false
+
+# --- release : bloqué tant que les clés ne sont pas dans Vault --------------
+# ⛔ MINISIGN_SECRET_KEY n'existe que comme secret GitHub Actions, illisible
+#    par l'API. Ressaisir dans Vault hasfy/signing/minisign puis retirer ces
+#    surcharges. Une release non signée ne doit jamais sortir en vert.
+release:sign-manifest:
+  rules: [{when: never}]
+release:sign-packages:
+  rules: [{when: never}]
+release:publish:
+  rules: [{when: never}]

@@ -44,7 +44,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/proto"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
 )
 
 // Version is overridden at build time: -ldflags "-X main.Version=v1.2.3".

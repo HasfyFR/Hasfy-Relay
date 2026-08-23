@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/server"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/server"
 )
 
 func main() {

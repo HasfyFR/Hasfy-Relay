@@ -1,4 +1,4 @@
-module github.com/HasfyFR/Hasfy-Relay
+module gitlab.hasfy.fr/hasfy/applications/hasfy-relay
 
 go 1.24.0
 

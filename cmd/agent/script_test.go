@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/proto"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
 )
 
 // The argv-only rule is what makes remote execution auditable: `argv` in the

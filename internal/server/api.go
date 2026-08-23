@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/audit"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
 	"github.com/google/uuid"
 )
 

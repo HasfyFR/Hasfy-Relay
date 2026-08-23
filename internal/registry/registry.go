@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/HasfyFR/Hasfy-Relay/internal/proto"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
 )
 
 // ErrNotFound is returned when a device is not currently online.
