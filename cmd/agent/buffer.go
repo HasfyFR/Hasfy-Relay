@@ -28,8 +28,8 @@ func (b *capBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
-func (b *capBuffer) Bytes() []byte    { return b.buf.Bytes() }
-func (b *capBuffer) Truncated() bool  { return b.full }
+func (b *capBuffer) Bytes() []byte   { return b.buf.Bytes() }
+func (b *capBuffer) Truncated() bool { return b.full }
 
 // bytesReader is a thin wrapper to feed []byte as io.Reader for cmd.Stdin
 // without pulling in bytes.NewReader's allocation patterns repeatedly.

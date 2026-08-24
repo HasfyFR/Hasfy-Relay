@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
 	"github.com/google/uuid"
+	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
 )
 
 // listDevicesReq is what Hasfy-App POSTs to /api/devices.

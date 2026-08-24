@@ -1,14 +1,14 @@
 // Package auth verifies the two distinct credential types this relay accepts:
 //
-//	1. Agent bearer tokens — issued by Hasfy-App when a device enrolls.
-//	   HMAC-SHA256 signed with the shared secret in Vault hasfy/relay/svc-hmac.
-//	   Claims: device_id, org_id, exp.
+//  1. Agent bearer tokens — issued by Hasfy-App when a device enrolls.
+//     HMAC-SHA256 signed with the shared secret in Vault hasfy/relay/svc-hmac.
+//     Claims: device_id, org_id, exp.
 //
-//	2. Operator session tokens — minted by THIS relay's /api/console endpoint
-//	   after Hasfy-App proves identity via the service HMAC. They authorize a
-//	   single browser to attach to a single device for a short window.
-//	   Claims: org_id, device_id, session_id, sub (operator_user_id),
-//	          ip_hash, ua_hash, exp.
+//  2. Operator session tokens — minted by THIS relay's /api/console endpoint
+//     after Hasfy-App proves identity via the service HMAC. They authorize a
+//     single browser to attach to a single device for a short window.
+//     Claims: org_id, device_id, session_id, sub (operator_user_id),
+//     ip_hash, ua_hash, exp.
 //
 // Phase 1.4 will add mTLS for agents (cert-manager + Vault PKI). For now,
 // bearer-only is acceptable because the WS endpoint is reachable only via

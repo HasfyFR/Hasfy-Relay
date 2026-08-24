@@ -32,10 +32,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
 	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/auth"
 	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/registry"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Config holds runtime parameters loaded from env / Vault.

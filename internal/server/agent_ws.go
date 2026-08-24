@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/coder/websocket"
 	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
 	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
 	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/registry"
-	"github.com/coder/websocket"
 )
 
 const (
@@ -22,10 +22,10 @@ const (
 // handleAgentWS is the WS endpoint agents connect to.
 //
 // Lifecycle:
-//   1. Authorization: Bearer <agent-jwt>  → claims (device_id, org_id)
-//   2. Upgrade WS, set 1 MiB read limit
-//   3. Expect first frame: register (must match claims)
-//   4. Pump reads/writes until either side closes or the parent ctx ends
+//  1. Authorization: Bearer <agent-jwt>  → claims (device_id, org_id)
+//  2. Upgrade WS, set 1 MiB read limit
+//  3. Expect first frame: register (must match claims)
+//  4. Pump reads/writes until either side closes or the parent ctx ends
 func (s *Server) handleAgentWS(w http.ResponseWriter, r *http.Request) {
 	tok := bearerToken(r)
 	if tok == "" {

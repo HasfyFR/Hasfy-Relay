@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/audit"
 	"gitlab.hasfy.fr/hasfy/applications/hasfy-relay/internal/proto"
-	"github.com/coder/websocket"
 )
 
 const (

@@ -22,13 +22,13 @@ var ErrNotFound = errors.New("device not registered")
 
 // Agent is the live record of a connected agent.
 type Agent struct {
-	DeviceID  string
-	OrgID     string
-	Hostname  string
-	OS        string
-	Arch      string
-	Version   string
-	JoinedAt  time.Time
+	DeviceID string
+	OrgID    string
+	Hostname string
+	OS       string
+	Arch     string
+	Version  string
+	JoinedAt time.Time
 
 	// outbound delivers frames to the WS write pump. Closed on disconnect.
 	outbound chan proto.Frame
