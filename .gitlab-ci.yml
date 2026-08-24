@@ -35,6 +35,13 @@ variables:
 security:deps:
   rules: [{when: never}]
 
+# golangci-lint n'a jamais tourné sur ce dépôt : la CI GitHub se limitait à
+# `go vet`. Non bloquant pendant le calibrage — même trajectoire que Semgrep
+# (D-03) et clippy sur Hasfy-Agent. Le rapport reste consultable.
+# Repasser en bloquant une fois la dette résorbée.
+go:lint:
+  allow_failure: true
+
 deploy:production:
   extends: .gitops-bump
   needs: ["docker:build", "security:container"]
