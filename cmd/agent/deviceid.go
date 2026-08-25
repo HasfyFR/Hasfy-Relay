@@ -116,17 +116,17 @@ func loadOrCreateIdentity(keyPath, deviceID string) (identity *deviceIdentity, c
 		return nil, false, fmt.Errorf("create device key file: %w", openErr)
 	}
 	if _, writeErr := f.Write(newSeed); writeErr != nil {
-		f.Close()
-		os.Remove(keyPath)
+		_ = f.Close()
+		_ = os.Remove(keyPath) // nettoyage au mieux : l'erreur utile est writeErr
 		return nil, false, fmt.Errorf("write device key: %w", writeErr)
 	}
 	if syncErr := f.Sync(); syncErr != nil {
-		f.Close()
-		os.Remove(keyPath)
+		_ = f.Close()
+		_ = os.Remove(keyPath) // nettoyage au mieux : l'erreur utile est syncErr
 		return nil, false, fmt.Errorf("sync device key: %w", syncErr)
 	}
 	if closeErr := f.Close(); closeErr != nil {
-		os.Remove(keyPath)
+		_ = os.Remove(keyPath) // nettoyage au mieux : l'erreur utile est closeErr
 		return nil, false, fmt.Errorf("close device key: %w", closeErr)
 	}
 
@@ -179,7 +179,8 @@ func removeEnvKey(path, key string) error {
 		return fmt.Errorf("create temp env file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds
+	// Nettoyage au mieux : sans effet une fois le renommage réussi.
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if err := tmp.Chmod(mode); err != nil {
 		tmp.Close()

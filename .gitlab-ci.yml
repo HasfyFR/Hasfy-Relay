@@ -35,12 +35,10 @@ variables:
 security:deps:
   rules: [{when: never}]
 
-# golangci-lint n'a jamais tourné sur ce dépôt : la CI GitHub se limitait à
-# `go vet`. Non bloquant pendant le calibrage — même trajectoire que Semgrep
-# (D-03) et clippy sur Hasfy-Agent. Le rapport reste consultable.
-# Repasser en bloquant une fois la dette résorbée.
-go:lint:
-  allow_failure: true
+# golangci-lint est BLOQUANT : la dette initiale (19 problèmes) a été résorbée.
+# .golangci.yml exclut nommément les motifs délibérément « au mieux » —
+# écritures sur stdout/stderr, fermetures différées — plutôt que de désactiver
+# le linter entier.
 
 deploy:production:
   extends: .gitops-bump

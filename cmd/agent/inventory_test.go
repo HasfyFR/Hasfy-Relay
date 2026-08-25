@@ -277,11 +277,14 @@ func TestLinuxPackagesDependOnOsquery(t *testing.T) {
 	}
 	s := string(cfg)
 
-	depends := strings.Index(s, "depends:")
-	if depends < 0 {
+	// La clé nfpms de GoReleaser est `dependencies:`, pas `depends:` — le test
+	// cherchait une clé qui n'existe pas dans le schéma, et échouait donc même
+	// avec une dépendance correctement déclarée.
+	deps := strings.Index(s, "dependencies:")
+	if deps < 0 {
 		t.Fatal("the .deb/.rpm declare no dependencies")
 	}
-	if !strings.Contains(s[depends:depends+200], "osquery") {
+	if !strings.Contains(s[deps:min(deps+200, len(s))], "osquery") {
 		t.Error("osquery is not declared as a package dependency")
 	}
 }

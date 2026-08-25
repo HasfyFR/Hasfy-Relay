@@ -139,10 +139,10 @@ func registerPublicKey(ctx context.Context, apiBase, enrollmentSecret, publicKey
 	}
 	defer resp.Body.Close()
 
-	switch {
-	case resp.StatusCode == http.StatusOK:
+	switch resp.StatusCode {
+	case http.StatusOK:
 		return nil
-	case resp.StatusCode == http.StatusUnauthorized:
+	case http.StatusUnauthorized:
 		return fmt.Errorf("%w: enrollment secret rejected (expired or already used)", errDeviceRefused)
 	default:
 		return fmt.Errorf("key registration HTTP %d", resp.StatusCode)

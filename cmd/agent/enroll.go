@@ -105,7 +105,8 @@ func writeEnrollmentStatus(path string, status EnrollmentStatus) error {
 		return fmt.Errorf("create temp status file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	// Nettoyage au mieux : le fichier a soit été renommé, soit disparu.
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if err := tmp.Chmod(0o640); err != nil {
 		tmp.Close()
@@ -204,7 +205,8 @@ func writeEnvFile(path string, values map[string]string) error {
 		return fmt.Errorf("create temp env file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	// Nettoyage au mieux : le fichier a soit été renommé, soit disparu.
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()

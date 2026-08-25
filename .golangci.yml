@@ -1,0 +1,38 @@
+# =============================================================================
+# golangci-lint — Hasfy-Relay
+# =============================================================================
+# golangci-lint n'avait jamais tourné sur ce dépôt : la CI GitHub se limitait
+# à `go vet`. Le premier passage a remonté 19 problèmes, dont 18 errcheck.
+#
+# Plutôt qu'un `allow_failure` global — qui rend le linter muet — les motifs
+# délibérément « au mieux » sont exclus NOMMÉMENT, et le reste est bloquant.
+# =============================================================================
+
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - govet
+    - ineffassign
+    - unused
+
+  exclusions:
+    rules:
+      # Écritures sur stdout/stderr : l'erreur ne peut pas être traitée
+      # utilement — si l'écriture du message d'erreur échoue, il n'y a plus
+      # de canal pour le signaler.
+      - path: .
+        linters: [errcheck]
+        text: "Error return value of `(os\\.Std(out|err)\\.WriteString|fmt\\.Fprint(f|ln)?)` is not checked"
+
+      # `defer x.Close()` sur un lecteur ou une connexion déjà consommée :
+      # l'erreur de fermeture n'apporte rien et masquerait l'erreur réelle.
+      - path: .
+        linters: [errcheck]
+        text: "Error return value of `[a-zA-Z.]*\\.Close` is not checked"
+
+      # Les tests peuvent ignorer des retours pour rester lisibles.
+      - path: _test\.go
+        linters: [errcheck]
