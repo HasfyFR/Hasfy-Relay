@@ -13,7 +13,7 @@
 
 include:
   - project: hasfy/tools/hasfy-ci-templates
-    ref: v1.0.8
+    ref: v1.1.0
     file:
       - templates/base.yml
       - templates/vault.yml
