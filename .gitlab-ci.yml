@@ -25,10 +25,12 @@ include:
 
 variables:
   APP_NAME: hasfy-relay
-  GO_VERSION: "1.24"
-  # Le chemin du module reste github.com/HasfyFR/Hasfy-Relay pour l'instant
-  # (D-04) : tous les packages sont sous internal/, donc aucun consommateur
-  # externe ne peut exister, mais le renommage se fait dans un commit dédié.
+  # Pas de GO_VERSION ici : go.yml en fixe la valeur pour tous les dépôts Go.
+  # La surcharge locale « 1.24 » qui traînait annulait silencieusement le
+  # relèvement fait dans le template et bloquait go:vulncheck, qui exige
+  # Go >= 1.25. Une variable définie des deux côtés est une variable qui dérive.
+  # Le module est déjà renommé gitlab.hasfy.fr/hasfy/applications/hasfy-relay,
+  # d'où GOPRIVATE.
   GOPRIVATE: "gitlab.hasfy.fr"
 
 # Projet Go : pas de dépendances npm à auditer.
