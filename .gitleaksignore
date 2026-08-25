@@ -1,0 +1,15 @@
+# =============================================================================
+# gitleaks — exceptions Hasfy-Relay
+# =============================================================================
+# Chaque ligne est une empreinte gitleaks : <commit>:<fichier>:<règle>:<ligne>.
+# N'ajouter une entrée qu'après avoir LU la ligne concernée et vérifié qu'il
+# s'agit d'une donnée synthétique. Une empreinte est liée à un commit : si la
+# ligne bouge, l'entrée cesse de s'appliquer et la fuite est redétectée.
+# =============================================================================
+
+# internal/audit/redact_test.go est la table de test de la fonction de masquage :
+# elle contient par construction un faux exemplaire de chaque motif que le
+# masquage doit attraper (clé AWS, jeton GitHub, JWT, jeton Vault, mot de passe,
+# clé RSA). Le JWT signalé est synthétique — charge utile {"sub":"hello"},
+# signature littérale « deadbeefcafebabe ». Le retirer viderait le test de sens.
+91f9dc455941bb566518e0b7336142922faa46af:internal/audit/redact_test.go:jwt:15
